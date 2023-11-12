@@ -1,0 +1,92 @@
+# -- GetConf.py
+# -- Description: This script will take a list of hostnames, login Cisco devices with the list and download the running config and save it to a file
+# --              in the format HOSTNAME-config.
+# --
+import paramiko
+import time
+import re
+import base64
+
+def wait_for_prompt(shell, prompt, timeout=10):
+    start_time = time.time()
+    buffer = ''
+    while time.time() - start_time < timeout:
+        if shell.recv_ready():
+            buffer += shell.recv(65535).decode('utf-8')
+            if re.search(prompt, buffer):
+                return True
+        time.sleep(1)
+    return False
+
+def decode_password(encoded_password_file):
+    with open(encoded_password_file, "r") as file:
+        encoded_password = file.read().strip()
+    return base64.b64decode(encoded_password).decode('utf-8')
+
+def connect_to_device(hostname, username, password, enable_password):
+    # Create an SSH client
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    try:
+        # Connect to the device
+        ssh.connect(hostname, username=username, password=password, look_for_keys=False, allow_agent=False)
+
+        # Create an SSH shell
+        shell = ssh.invoke_shell()
+
+        # Wait for the initial user prompt
+        wait_for_prompt(shell, r'>')
+
+        # Send commands to the device
+        shell.send("enable\n")
+        if not wait_for_prompt(shell, r'#'):
+            raise Exception("Failed to enter enable mode")
+
+        shell.send("terminal length 0\n")
+        wait_for_prompt(shell, r'#')
+
+        # Send the command to get the hostname
+        shell.send("show run | include hostname\n")
+        if not wait_for_prompt(shell, r'#'):
+            raise Exception("Failed to get hostname")
+
+        # Receive and decode the output
+        output = shell.recv(65535).decode('utf-8')
+
+        # Extract the hostname
+        hostname = output.split()[1]
+
+        # Save the running config to a file
+        shell.send("show running-config\n")
+        if not wait_for_prompt(shell, r'#'):
+            raise Exception("Failed to get running config")
+
+        running_config = shell.recv(65535).decode('utf-8')
+
+        with open(f"{hostname}-config.txt", "w") as file:
+            file.write(running_config)
+
+    except Exception as e:
+        print(f"Error connecting to {hostname}: {e}")
+    finally:
+        # Close the SSH connection
+        ssh.close()
+
+def process_host_file(file_path, encoded_password_file):
+    password = decode_password(encoded_password_file)
+
+    with open(file_path, "r") as file:
+        hostnames = file.read().splitlines()
+
+    for hostname in hostnames:
+        # Replace these with your actual credentials
+        username = "your_username"
+        enable_password = "your_enable_password"
+
+        connect_to_device(hostname, username, password, enable_password)
+
+if __name__ == "__main__":
+    host_file_path = "hostnames.txt"  # Replace with your actual file path
+    encoded_password_file = "encoded_password.txt"  # Replace with your actual file path
+    process_host_file(host_file_path, encoded_password_file)
