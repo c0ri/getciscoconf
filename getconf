@@ -1,14 +1,49 @@
 # -- GetConf.py
 # -- Description: This script will take a list of hostnames, login Cisco devices with the list and download the running config and save it to a file
 # --              in the format HOSTNAME-config.
+# --              I made a few directories such as logs, configs to store things in. Please check the paths.
 # --
 import paramiko
 import time
 import re
 import base64
 
-# Setup logging
-paramiko.util.log_to_file('ssh.log')
+# -- Setup logging
+paramiko.util.log_to_file('logs/ssh.log')
+
+def is_enabled(shell, timeout=10):
+    start_time = time.time()
+    buffer = ''
+    print(f"Checking if we are enabled: ", end='')
+    while time.time() - start_time < timeout:
+        if shell.recv_ready():
+            buffer += shell.recv(65535).decode('utf-8')
+            if re.search(r'#', buffer):
+                print(f"YES.")
+                return True
+            else:
+                print(f"NO.")
+                return False
+        time.sleep(1)
+    return False
+
+def wait_for_conf(shell, prompt, timeout=60):
+    global running_config
+
+    start_time = time.time()
+    running_config = ''
+    print(f"Downloading config.", end='')
+    while time.time() - start_time < timeout:
+        if shell.recv_ready():
+            running_config += shell.recv(999999).decode('utf-8')
+            if re.search(prompt, running_config):
+                #print(running_config)
+                return True
+        time.sleep(1)
+        print(f".", end='')
+    #print(running_config)
+    print(f" Complete.")
+    return False
 
 def wait_for_prompt(shell, prompt, timeout=10):
     start_time = time.time()
@@ -21,60 +56,84 @@ def wait_for_prompt(shell, prompt, timeout=10):
         time.sleep(1)
     return False
 
+# -- This is a crude way to obfuscate the password externally. This function should
+# -- be replaced with Passbolt/API or Azure Keyvault/API.
 def decode_password(encoded_password_file):
     with open(encoded_password_file, "r") as file:
         encoded_password = file.read().strip()
     return str(base64.b64decode(encoded_password).decode('ascii')).strip()
 
 def connect_to_device(hostname, username, password, enable_password):
-    # Create an SSH client
+    global running_config
+
+    # -- Create an SSH client
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
+    print(f"---------------------------------------------------")
+    print(f"Working on {hostname}")
+    print(f"---------------------------------------------------")
     try:
-        # Connect to the device
+        # -- Connect to the device
         print(f"Connecting to {hostname}")
         ssh.connect(hostname, username=username, password=password, look_for_keys=False, allow_agent=False)
 
-        # Create an SSH shell
-        print(f"Envoking Shell")
+        # -- Create an SSH shell
+        print(f"Connecting to {hostname}: ", end='')
         shell = ssh.invoke_shell()
-
-        # Wait for the initial user prompt
-        print(f"Waiting for prompt >")
-        wait_for_prompt(shell, r'>')
-
-        # Send commands to the device
-        print(f"Sending enable command")
-        shell.send("enable\n")
         time.sleep(2)
-        print(f"Sending enable password")
-        shell.send(f"{enable_password}\n")
-        time.sleep(2)
-        print(f"Waiting for enabled prompt")
-        if not wait_for_prompt(shell, r'#'):
-            raise Exception("Failed to enter enable mode")
-        print(f"Setting terminal length 0")
+        print(f"Connected!")
+
+        # -- Check if we are dropped into an enable prompt. If not send enable sequence.
+        if not is_enabled(shell):
+            # -- wait for the intial user prompt
+            print(f"    -* Waiting for standard prompt >: ", end='')
+            wait_for_prompt(shell, r'>')
+            printf(" Received.")
+            # -- Send commands to the device
+            print(f"    -* Sending enable command: ", end='')
+            shell.send("enable\n")
+            time.sleep(2)
+            print(f" Complete.")
+            print(f"    -* Sending enable password: ", end='')
+            shell.send(f"{enable_password}\n")
+            time.sleep(2)
+            print(f" Complete.")
+
+        print(f"Tweaking terminal: ", end='')
         shell.send("terminal length 0\n")
-        wait_for_prompt(shell, r'#')
+        time.sleep(1)
+        print(f" Complete.")
+        if not_wait_for_prompt(shell, r'#'):
+            raise Exception("Failed to set terminal length.")
+        #print(f"Downloading the running config: ", end='')
 
-        # Save the running config to a file
-        print(f"Downloading config...")
-        shell.send("show running-config\n")
-        if not wait_for_prompt(shell, r'#'):
-            raise Exception("Failed to get running config")
+        # -- Save the running config to a file
+        running_config=''
+        shell.send("show run\n")
+        time.sleep(1)
+        #stdin, stdout, stderr = ssh.exec_command('show run')
+        #running_config = stdout.readlines()
+        #time.sleep(60)
+        if not_wait_for_conf(shell, r'#'):
+            raise Exception("Failed to download config.")
+            print(running_config)
+        else:
+            print(f" Complete.")
 
-        running_config = shell.recv(999999).decode('utf-8')
-        time.sleep(30)
-        print(f"Config downloaded, Writing to file configs/{hostname}-config")
-        with open(f"{hostname}-config", "w") as file:
+        print(f"Saving configuration to configs/{hostname}-config: ", end='')
+        with open(f"configs/{hostname}-config", "w") as file:
             file.write(running_config)
-
+        print(f" Complete.")
+    
     except Exception as e:
-        print(f"Error connecting to {hostname}: {e}")
+        print(f"{time.ctime()} - Failed to connect to {hostname}, check DNS/reachability.\n{e}\n")
+        with open(f"logs/errors.log", "a") as file:
+            file.write(f"{time.ctime()} - Failed to connect to {hostname}, check DNS reachability.\n{e}\n")
     finally:
-        # Close the SSH connection
+        # -- Close the SSH connection
         ssh.close()
+        print(f"Connection closed.")
 
 def process_host_file(file_path, encoded_password_file):
     password = decode_password(encoded_password_file)
@@ -83,13 +142,15 @@ def process_host_file(file_path, encoded_password_file):
         hostnames = file.read().splitlines()
 
     for hostname in hostnames:
-        # Replace these with your actual credentials
+        # -- Replace these with your actual credentials
         username = "your_username"
         enable_password = password   # default to use the same password   
 
         connect_to_device(hostname, username, password, enable_password)
 
 if __name__ == "__main__":
-    host_file_path = "hostnames.txt"  # Replace with your actual file path
-    encoded_password_file = "encoded_password.txt"  # Replace with your actual file path
+    # -- Need a new function to replace simple list of hostnames, since we will backup by class.
+    host_file_path = "hostnames.txt"                # Replace with your actual file path
+    encoded_password_file = ".pw"                   # Replace with your actual file path
     process_host_file(host_file_path, encoded_password_file)
+    running_config = ''
