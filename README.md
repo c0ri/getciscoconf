@@ -3,6 +3,7 @@ This is a simple set of Python scripts to allow you to do useful things with Cis
 
 # Last Update
 2024-12-06 - Cleaned up logging.
+2024-12-06 - Added a new multi-threaded version of the script which I hope will replace the original.
 
 # GetConf.py
 This will take a file 'hostnames.txt' which a simple list of hostnames, one per line.  It will then connect to those and pull the running config and
@@ -18,6 +19,7 @@ rungen.py Options:
     --commands <commandlist> (a text file containing a list of commands to run against each host from the --file option.
     --verbose  Prints output from everything the script is doing.
     --timeout  Optional argument that allows you to set a timeout. The default timeout is 10 seconds.
+    --threads  Number of threads to use (default: 8)
 
 The script will save output as $HOSTNAME-$command-$TIME
 
