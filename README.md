@@ -2,7 +2,7 @@
 This is a simple set of Python scripts to allow you to do useful things with Cisco IOS devices. Such as downloading a config, or running commands ad-hoc against a large number of devices.
 
 # Last Update
-2024-11-19
+2024-12-06 - Cleaned up logging.
 
 # GetConf.py
 This will take a file 'hostnames.txt' which a simple list of hostnames, one per line.  It will then connect to those and pull the running config and

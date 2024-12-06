@@ -4,11 +4,17 @@ import re
 import argparse
 from getpass import getpass
 from datetime import datetime
+import os
 
 paramiko.util.log_to_file('logs/ssh.log')
 
 # Define a global verbose flag
 verbose = False
+
+def ensure_directory_exists(directory):
+    """Ensures the directory exists, creates it if not."""
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
 def is_enabled(shell, timeout):
     start_time = time.time()
@@ -42,10 +48,10 @@ def wait_for_prompt(shell, prompt, timeout):
         time.sleep(1)
     return False
 
-def wait_for_command_output(shell, command, prompt, hostname, timeout):
+def wait_for_command_output(shell, command, prompt, hostname, timeout, session_log_file):
     """
-    Waits for the output of a given command and logs it to a file.
-    For 'show run', the output file will be named with 'config' instead of the command.
+    Waits for the output of a given command and logs it to the appropriate file.
+    Regular commands go to the session log, and 'show run' commands go to separate config files.
     """
     start_time = time.time()
     command_output = ''
@@ -58,20 +64,25 @@ def wait_for_command_output(shell, command, prompt, hostname, timeout):
                 break
         time.sleep(1)
 
-    # Determine file naming
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    
+    # Handle 'show run' commands separately
     if "show run" in command.lower():
         sanitized_command = "config"
+        ensure_directory_exists("configs")
+        config_filename = f"configs/{hostname}-{timestamp}-{sanitized_command}.log"
+        verbose_print(f"Saving 'show run' output to {config_filename}")
+        with open(config_filename, "w") as file:
+            file.write(command_output)
     else:
-        sanitized_command = re.sub(r'\W+', '_', command.strip())
-
-    output_filename = f"{hostname}-{sanitized_command}-{timestamp}.log"
-
-    verbose_print(f"Saving command output to {output_filename}")
-    with open(output_filename, "w") as file:
-        file.write(command_output)
+        # Save regular commands to the session log
+        verbose_print(f"Appending command output to session log {session_log_file}")
+        with open(session_log_file, "a") as file:
+            file.write(f"\n--- Output for command: {command} ---\n")
+            file.write(command_output)
 
     return command_output
+
 
 def connect_to_device(hostname, username, password, enable_password, commands, timeout):
     ssh = paramiko.SSHClient()
@@ -88,6 +99,11 @@ def connect_to_device(hostname, username, password, enable_password, commands, t
         shell = ssh.invoke_shell()
         time.sleep(2)
         verbose_print(f"Connected!")
+
+        # Prepare session log file
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        session_log_file = f"logs/{hostname}-session-{timestamp}.log"
+        ensure_directory_exists("logs")
 
         # Check if in enabled mode; if not, enter it
         if not is_enabled(shell, timeout):
@@ -107,7 +123,7 @@ def connect_to_device(hostname, username, password, enable_password, commands, t
         for command in commands:
             shell.send(f"{command}\n")
             time.sleep(1)
-            wait_for_command_output(shell, command, r'#', hostname, timeout)
+            wait_for_command_output(shell, command, r'#', hostname, timeout, session_log_file)
 
     except Exception as e:
         verbose_print(f"{time.ctime()} - Failed to connect to {hostname}, check DNS/reachability.\n{e}\n")
