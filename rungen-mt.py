@@ -10,15 +10,15 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-paramiko.util.log_to_file('logs/ssh.log')
-
 # -- Define a global verbose flag
 verbose = False
 
 def ensure_directory_exists(directory):
     # -- Ensures the directory exists, creates it if not.
-    if not os.path.exists(directory):
-        os.makedirs(directory)
+    curr_dir = os.getcwd()
+    check_dir = curr_dir + "/" + directory
+    if not os.path.exists(check_dir):
+        os.makedirs(check_dir)
 
 def is_enabled(shell, timeout):
     start_time = time.time()
@@ -190,7 +190,10 @@ if __name__ == "__main__":
     # -- Ensure directories exist here
     ensure_directory_exists("logs")
     ensure_directory_exists("configs")
-    
+
+    # -- Log everything to ssh.log
+    paramiko.util.log_to_file('logs/ssh.log')
+
     username = input("Enter username: ")
     password = getpass("Enter password: ")
     enable_password = getpass("Enter enable password (if applicable, press Enter to skip): ") or password
