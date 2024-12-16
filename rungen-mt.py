@@ -11,11 +11,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 paramiko.util.log_to_file('logs/ssh.log')
 
-# Define a global verbose flag
+# -- Define a global verbose flag
 verbose = False
 
 def ensure_directory_exists(directory):
-    """Ensures the directory exists, creates it if not."""
+    # -- Ensures the directory exists, creates it if not.
     if not os.path.exists(directory):
         os.makedirs(directory)
 
@@ -39,7 +39,7 @@ def is_enabled(shell, timeout):
     return False
 
 def verbose_print(message):
-    """Prints the message only if verbosity is enabled."""
+    # -- Prints the message only if verbosity is enabled.
     if verbose:
         print(f"[{datetime.now().strftime('%Y%m%d%H%M%S')}] {message}")
 
@@ -70,23 +70,22 @@ def wait_for_command_output(shell, command, prompt, hostname, timeout, session_l
                 break
         time.sleep(1)
 
-    # Fallback in case the prompt isn't matched
+    # -- Fallback in case the prompt isn't matched
     if not re.search(prompt, command_output):
         verbose_print(f"Warning: Command '{command}' output did not end with expected prompt '{prompt}'.")
         command_output += f"\n[Warning: Prompt '{prompt}' not found. Output might be incomplete.]"
     
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     
-    # Handle 'show run' commands separately
+    # -- Handle 'show run' commands separately
     if "show run" in command.lower():
         sanitized_command = "config"
-        ensure_directory_exists("configs")
         config_filename = f"configs/{hostname}-{timestamp}-{sanitized_command}.log"
         verbose_print(f"Saving 'show run' output to {config_filename}")
         with open(config_filename, "w") as file:
             file.write(command_output)
     else:
-        # Save regular commands to the session log
+        # -- Save regular commands to the session log
         verbose_print(f"Appending command output to session log {session_log_file}")
         with open(session_log_file, "a") as file:
             file.write(f"\n--- Output for command: {command} ---\n")
@@ -111,12 +110,11 @@ def connect_to_device(hostname, username, password, enable_password, commands, t
         time.sleep(2)
         verbose_print(f"Connected!")
 
-        # Prepare session log file
+        # -- Prepare session log file
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         session_log_file = f"logs/{hostname}-session-{timestamp}.log"
-        ensure_directory_exists("logs")
 
-        # Check if in enabled mode; if not, enter it
+        # -- Check if in enabled mode; if not, enter it
         if not is_enabled(shell, timeout):
             verbose_print(f"Entering enable mode...")
             wait_for_prompt(shell, r'>', timeout)
@@ -130,8 +128,14 @@ def connect_to_device(hostname, username, password, enable_password, commands, t
         time.sleep(1)
         wait_for_prompt(shell, r'#', timeout)
 
-        # Process each command in the list
+        # -- Process each command in the list
         for command in commands:
+            # -- Skip blank lines or lines with only "!"
+            if not command.strip() or command.strip() == "!":
+                verbose_print(f"Skipping invalid command: '{command}'")
+                continue
+            
+            # -- Send the command and process output
             shell.send(f"{command}\n")
             time.sleep(1)
             wait_for_command_output(shell, command, r'#', hostname, timeout, session_log_file)
@@ -152,7 +156,7 @@ def process_host_file(file_path, username, password, enable_password, commands, 
     with open(file_path, "r") as file:
         hostnames = file.read().splitlines()
 
-    # Create a ThreadPoolExecutor to manage threads
+    # -- Create a ThreadPoolExecutor to manage threads
     with ThreadPoolExecutor(max_threads) as executor:
         future_to_hostname = {
             executor.submit(connect_to_device, hostname, username, password, enable_password, commands, timeout): hostname
@@ -162,7 +166,7 @@ def process_host_file(file_path, username, password, enable_password, commands, 
         for future in as_completed(future_to_hostname):
             hostname = future_to_hostname[future]
             try:
-                # Get the result to ensure the task completed successfully
+                # -- Get the result to ensure the task completed successfully
                 future.result()
                 verbose_print(f"Completed processing for {hostname}")
             except Exception as exc:
@@ -181,6 +185,10 @@ if __name__ == "__main__":
 
     verbose = args.verbose
 
+    # -- Ensure directories exist here
+    ensure_directory_exists("logs")
+    ensure_directory_exists("configs")
+    
     username = input("Enter username: ")
     password = getpass("Enter password: ")
     enable_password = getpass("Enter enable password (if applicable, press Enter to skip): ") or password
