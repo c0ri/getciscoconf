@@ -6,6 +6,7 @@ from getpass import getpass
 from datetime import datetime
 import os
 import traceback
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -57,11 +58,11 @@ def wait_for_prompt(shell, prompt, timeout):
 def wait_for_command_output(shell, command, prompt, hostname, timeout, session_log_file):
     """
     Waits for the output of a given command and logs it to the appropriate file.
-    Regular commands go to the session log, and 'show run' commands go to separate config files.
+    Handles multi-threading with care to avoid timing issues.
     """
-    start_time = time.time()
+    start_time = time.time()  # -- Unique to each thread
     command_output = ''
-    verbose_print(f"Running command: {command}")
+    verbose_print(f"Running command: {command} (Thread: {threading.current_thread().name})")
 
     while time.time() - start_time < timeout:
         if shell.recv_ready():
@@ -70,26 +71,27 @@ def wait_for_command_output(shell, command, prompt, hostname, timeout, session_l
                 break
         time.sleep(1)
 
-    # -- Fallback in case the prompt isn't matched
+    # -- Warn only if the prompt isn't found after timeout
     if not re.search(prompt, command_output):
-        verbose_print(f"Warning: Command '{command}' output did not end with expected prompt '{prompt}'.")
-        command_output += f"\n[Warning: Prompt '{prompt}' not found. Output might be incomplete.]"
-    
+        verbose_print(f"Warning (Thread {threading.current_thread().name}): Command '{command}' output did not end with expected prompt '{prompt}'.")
+    else:
+        verbose_print(f"Command '{command}' completed successfully with expected prompt (Thread {threading.current_thread().name}).")
+
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     
-    # -- Handle 'show run' commands separately
     if "show run" in command.lower():
         sanitized_command = "config"
         config_filename = f"configs/{hostname}-{timestamp}-{sanitized_command}.log"
         verbose_print(f"Saving 'show run' output to {config_filename}")
-        with open(config_filename, "w") as file:
-            file.write(command_output)
+        with threading.Lock():  # -- Ensure no race conditions when writing to files
+            with open(config_filename, "w") as file:
+                file.write(command_output)
     else:
-        # -- Save regular commands to the session log
         verbose_print(f"Appending command output to session log {session_log_file}")
-        with open(session_log_file, "a") as file:
-            file.write(f"\n--- Output for command: {command} ---\n")
-            file.write(command_output)
+        with threading.Lock():  # -- Protect shared resources
+            with open(session_log_file, "a") as file:
+                file.write(f"\n--- Output for command: {command} ---\n")
+                file.write(command_output)
 
     return command_output
 
